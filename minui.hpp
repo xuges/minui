@@ -158,23 +158,24 @@ namespace minui
 		Style styles_[Count];
 	};
 
+
 	class Painter : public Handle
 	{
 	public:
 		void drawPixel(int x, int y, Color color)
 		{
-			SetPixel(mem_, x, y, color.toColorRef());
+			SetPixel(mdc_, x, y, color.toColorRef());
 		}
 
 		void drawLine(int x, int y, int x1, int y1, int width, Color color)
 		{
-			HPEN pen = CreatePen(PS_SOLID, width, color.toColorRef());
-			HPEN old = (HPEN)SelectObject(mem_, pen);
+			HPEN pen = CreatePen(PS_SOLID, width * ss_, color.toColorRef());
+			HPEN old = (HPEN)SelectObject(mdc_, pen);
 
-			MoveToEx(mem_, x, y, NULL);
-			LineTo(mem_, x1, y1);
+			MoveToEx(mdc_, x * ss_, y * ss_, NULL);
+			LineTo(mdc_, x1 * ss_, y1 * ss_);
 
-			SelectObject(mem_, old);
+			SelectObject(mdc_, old);
 			DeleteObject(pen);
 		}
 
@@ -183,17 +184,17 @@ namespace minui
 			HFONT oldFont;
 			HFONT font = createFont(style);
 			if (font)
-				oldFont = (HFONT)SelectObject(mem_, font);
+				oldFont = (HFONT)SelectObject(mdc_, font);
 
-			SetBkMode(mem_, TRANSPARENT);
-			auto buf = utils::utf8ToUtf16(text);
-			auto drawRect = rect.toRect();
-			auto oldColor = SetTextColor(mem_, style.color.toColorRef());
-			DrawText(mem_, buf.data, buf.length, &drawRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-			SetTextColor(mem_, oldColor);
+			SetBkMode(mdc_, TRANSPARENT);
+			auto str = utils::utf8ToUtf16(text);
+			auto drawRect = rect.toRect(ss_);
+			auto oldColor = SetTextColor(mdc_, style.color.toColorRef());
+			DrawText(mdc_, str.data, str.length, &drawRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+			SetTextColor(mdc_, oldColor);
 
 			if (font)
-				SelectObject(mem_, oldFont);
+				SelectObject(mdc_, oldFont);
 		}
 
 		void drawImage(const Rect& rect, const uint8_t* bmp)
@@ -213,13 +214,14 @@ namespace minui
 			int height = bih->biHeight;
 			const uint8_t* pixels = bmp + bfh->bfOffBits;
 
-			HDC dc = CreateCompatibleDC(mem_);
+			HDC dc = CreateCompatibleDC(mdc_);
 			HBITMAP bitmap = CreateCompatibleBitmap(hdc_, width, height);
 			HBITMAP old = (HBITMAP)SelectObject(dc, bitmap);
 			BITMAPINFO bi = { 0 };
 			bi.bmiHeader = *bih;
 			SetDIBits(dc, bitmap, 0, height, pixels, &bi, DIB_RGB_COLORS);
-			BitBlt(mem_, rect.x, rect.y, rect.x + rect.width, rect.y + rect.height, dc, 0, 0, SRCCOPY);
+			RECT rt = rect.toRect(ss_);
+			StretchBlt(mdc_, rt.left, rt.top, rt.right - rt.left, rt.bottom - rt.top, dc, 0, 0, width, height, SRCCOPY);
 			SelectObject(dc, old);
 			DeleteObject(bitmap);
 			DeleteDC(dc);
@@ -227,25 +229,27 @@ namespace minui
 
 		void frameRect(const Rect& rect, int lineWidth, Color color)
 		{
-			RECT frame = rect.toRect();
+			RECT frame = rect.toRect(ss_);
+			// TODO: lineWidth
 			HBRUSH brush = CreateSolidBrush(color.toColorRef());
-			FrameRect(mem_, &frame, brush);
+			FrameRect(mdc_, &frame, brush);
 			DeleteObject(brush);
 		}
 
 		void fillRect(const Rect& rect, Color color)
 		{
-			RECT fill = rect.toRect();
+			RECT fill = rect.toRect(ss_);
 			HBRUSH brush = CreateSolidBrush(color.toColorRef());
-			FillRect(mem_, &fill, brush);
+			FillRect(mdc_, &fill, brush);
 			DeleteObject(brush);
 		}
 
 		void fillRoundRect(const Rect& rect, int radius, Color color)
 		{
 			HBRUSH brush = CreateSolidBrush(color.toColorRef());
-			HRGN hrgn = CreateRoundRectRgn(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height, radius, radius);
-			FillRgn(mem_, hrgn, brush);
+			RECT rt = rect.toRect(ss_);
+			HRGN hrgn = CreateRoundRectRgn(rt.left, rt.top, rt.right, rt.bottom, radius * ss_, radius * ss_);
+			FillRgn(mdc_, hrgn, brush);
 			DeleteObject(hrgn);
 			DeleteObject(brush);
 		}
@@ -253,8 +257,9 @@ namespace minui
 		void roundRect(const Rect& rect, int lineWidth, int radius, Color color)
 		{
 			HBRUSH brush = CreateSolidBrush(color.toColorRef());
-			HRGN hrgn = CreateRoundRectRgn(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height, radius, radius);
-			FrameRgn(mem_, hrgn, brush, lineWidth, lineWidth);
+			RECT rt = rect.toRect(ss_);
+			HRGN hrgn = CreateRoundRectRgn(rt.left, rt.top, rt.right, rt.bottom, radius * ss_, radius * ss_);
+			FrameRgn(mdc_, hrgn, brush, lineWidth * ss_, lineWidth * ss_);
 			DeleteObject(hrgn);
 			DeleteObject(brush);
 		}
@@ -264,27 +269,29 @@ namespace minui
 
 		Painter(HDC hdc, int width, int height)
 			: hdc_(hdc)
+			, ss_(2) // 2x SSAA
 			, width_(width)
 			, height_(height)
 		{
-			mem_ = CreateCompatibleDC(hdc);
-			bitmap_ = CreateCompatibleBitmap(hdc, width, height);
-			old_ = (HBITMAP)SelectObject(mem_, bitmap_);
+			mdc_ = CreateCompatibleDC(hdc);
+			bitmap_ = CreateCompatibleBitmap(hdc, width * ss_, height * ss_);
+			old_ = (HBITMAP)SelectObject(mdc_, bitmap_);
 		}
 
 		~Painter()
 		{
-			BitBlt(hdc_, 0, 0, width_, height_, mem_, 0, 0, SRCCOPY);
-			SelectObject(mem_, old_);
-			DeleteDC(mem_);
+			SetStretchBltMode(hdc_, HALFTONE);
+			StretchBlt(hdc_, 0, 0, width_, height_, mdc_, 0, 0, width_ * ss_, height_ * ss_, SRCCOPY);
+			SelectObject(mdc_, old_);
+			DeleteDC(mdc_);
 			DeleteObject(bitmap_);
 		}
 
 		void setClipRect(const Rect& rect)
 		{
-			RECT rt = rect.toRect();
+			RECT rt = rect.toRect(ss_);
 			HRGN hrgn = CreateRectRgnIndirect(&rt);
-			SelectClipRgn(mem_, hrgn);
+			SelectClipRgn(mdc_, hrgn);
 			DeleteObject(hrgn);
 		}
 
@@ -293,7 +300,7 @@ namespace minui
 			if (style.fontFamily)
 			{
 				LOGFONT ft = { 0 };
-				ft.lfHeight = style.fontSize;
+				ft.lfHeight = style.fontSize * ss_;
 				for (auto fontFamily : style.fontFamily)
 				{
 					if (fontFamily)
@@ -310,9 +317,10 @@ namespace minui
 
 	private:
 		HDC hdc_;
-		HDC mem_;
+		HDC mdc_;
 		HBITMAP bitmap_;
 		HBITMAP old_;
+		int ss_;
 		int width_;
 		int height_;
 	};
