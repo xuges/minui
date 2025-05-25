@@ -5,31 +5,36 @@
 #include <windowsx.h>
 #include <dwmapi.h>
 
-#include <map>
-#include <string>
-#include <vector>
 #include <functional>
 #include <cstdint>
-
-#include <stdio.h>
 
 namespace minui
 {
 	namespace utils
 	{
-		inline std::wstring utf8ToUtf16(const char* src)
+		struct WString
+		{
+			wchar_t* data;
+			size_t length;
+
+			~WString()
+			{
+				delete[] data;
+			}
+		};
+
+		inline WString utf8ToUtf16(const char* src)
 		{
 			int length = MultiByteToWideChar(CP_UTF8, 0, src, -1, NULL, 0);
-			std::wstring dst;
-			dst.resize(length-1);
-			MultiByteToWideChar(CP_UTF8, 0, src, -1, &dst[0], length);
-			return dst;
+			auto data = new wchar_t[length];
+			data[length - 1] = 0;
+			MultiByteToWideChar(CP_UTF8, 0, src, -1, data, length - 1);
+			return WString{ data, size_t(length - 1) };
 		}
 
-		template <size_t N>
-		inline void utf8ToUtf16(const char* src, TCHAR (&dst)[N])
+		inline void utf8ToUtf16(const char* src, wchar_t* dst, size_t len)
 		{
-			MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, N);
+			MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, len);
 		}
 	}
 
@@ -77,9 +82,9 @@ namespace minui
 			return x <= pt.x && pt.x <= x + width && y <= pt.y && pt.y < y + height;
 		}
 
-		RECT toRect() const
+		RECT toRect(int scale = 1) const
 		{
-			return { x, y, x + width, y + height };
+			return { x * scale, y * scale, x * scale + width * scale, y * scale + height * scale };
 		}
 	};
 
@@ -108,32 +113,49 @@ namespace minui
 	class Styles : public Handle
 	{
 	public:
+		enum Id
+		{
+			Window,
+			Button,
+			ButtonHover,
+			ButtonPress,
+			Label,
+			Image,
+			Progress,
+			CloseButton,
+			CloseButtonHover,
+			CloseButtonPress,
+			Custom,
+			Count = 128
+		};
+
 		static Styles& instance()
 		{
 			static Styles styles;
 			return styles;
 		}
 
-		void addStyle(const std::string& sel, const Style& style)
+		void setStyle(int id, const Style& style)
 		{
-			styles_[sel].push_back(style);
+			if (0 <= id && id < Count)
+				styles_[id] = style;
 		}
 
-		const Style& getStyle(const std::string& sel, const std::string& fallback = "window") const
+		const Style& getStyle(int id) const
 		{
-			auto iter = styles_.find(sel);
-			if (iter != styles_.end())
-				return iter->second.back();
-
-			iter = styles_.find(fallback);
-			if (iter != styles_.end())
-				return iter->second.back();
-
-			return Style::defaultStyle();
+			if (0 <= id && id < Count)
+				return styles_[id];
+			return styles_[0];
 		}
 
 	private:
-		std::map<std::string, std::vector<Style> > styles_;
+		Styles()
+		{
+			for (size_t i = 0; i < Count; ++i)
+				styles_[i] = Style::defaultStyle();
+		}
+
+		Style styles_[Count];
 	};
 
 	class Painter : public Handle
@@ -167,21 +189,21 @@ namespace minui
 			auto buf = utils::utf8ToUtf16(text);
 			auto drawRect = rect.toRect();
 			auto oldColor = SetTextColor(mem_, style.color.toColorRef());
-			DrawText(mem_, buf.c_str(), buf.length(), &drawRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+			DrawText(mem_, buf.data, buf.length, &drawRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 			SetTextColor(mem_, oldColor);
 
 			if (font)
 				SelectObject(mem_, oldFont);
 		}
 
-		void drawImage(const Rect& rect, const uint8_t* bmp, size_t len)
+		void drawImage(const Rect& rect, const uint8_t* bmp)
 		{
 			if (bmp[0] != 0x42 && bmp[1] != 0x4d)
 				return;
 
 			BITMAPFILEHEADER* bfh = (BITMAPFILEHEADER*)bmp;
-			if (bfh->bfSize > len)
-				return;
+			/*if (bfh->bfSize > len)
+				return;*/
 
 			BITMAPINFOHEADER* bih = (BITMAPINFOHEADER*)(bmp + sizeof(BITMAPFILEHEADER));
 			if (bih->biBitCount < 24)
@@ -191,7 +213,7 @@ namespace minui
 			int height = bih->biHeight;
 			const uint8_t* pixels = bmp + bfh->bfOffBits;
 
-			HDC dc = CreateCompatibleDC(hdc_);
+			HDC dc = CreateCompatibleDC(mem_);
 			HBITMAP bitmap = CreateCompatibleBitmap(hdc_, width, height);
 			HBITMAP old = (HBITMAP)SelectObject(dc, bitmap);
 			BITMAPINFO bi = { 0 };
@@ -225,7 +247,7 @@ namespace minui
 			HRGN hrgn = CreateRoundRectRgn(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height, radius, radius);
 			FillRgn(mem_, hrgn, brush);
 			DeleteObject(hrgn);
-			DeleteObject(brush);			
+			DeleteObject(brush);
 		}
 
 		void roundRect(const Rect& rect, int lineWidth, int radius, Color color)
@@ -276,7 +298,7 @@ namespace minui
 				{
 					if (fontFamily)
 					{
-						utils::utf8ToUtf16(fontFamily, ft.lfFaceName);
+						utils::utf8ToUtf16(fontFamily, ft.lfFaceName, sizeof(ft.lfFaceName) - 1);
 						HFONT font = CreateFontIndirect(&ft);
 						if (font)
 							return font;
@@ -302,14 +324,16 @@ namespace minui
 	public:
 		using OnDrawFunc = std::function<void(Painter&)>;
 
-		const std::string& name() const
+		virtual ~Widget() = default;
+
+		int id() const
 		{
-			return name_;
+			return id_;
 		}
 
-		void setName(const std::string& name)
+		void setId(int id)
 		{
-			name_ = name;
+			id_ = id;
 		}
 
 		const Rect& rect() const
@@ -368,11 +392,11 @@ namespace minui
 		}
 
 	private:
-		std::string name_;
 		Rect rect_;
 		Style style_;
 		OnDrawFunc onDraw_;
 		Window* window_;
+		int id_;
 		bool visible_;
 	};
 
@@ -381,36 +405,58 @@ namespace minui
 	class Window : public Handle
 	{
 	public:
+		enum
+		{
+			TimerCount = 32,
+			WidgetCount = 64
+		};
+
 		using TimerFunc = std::function<bool()>;
 		using OnCloseFunc = std::function<void()>;
 
-		static Window* create()
+		Window()
+			: hwnd_(NULL)
+			, title_(nullptr)
+			, close_(nullptr)
+			, timerId_(0)
+			, widgetIndex_(0)
+			, mouseWidget_(nullptr)
+			, mouseIn_(false)
+		{
+
+		}
+
+		~Window()
+		{
+			if (hwnd_)
+				DestroyWindow(hwnd_);
+		}
+
+		bool create()
 		{
 			int style = WS_OVERLAPPED | WS_CAPTION | WS_THICKFRAME;
 			HWND hwnd = CreateWindowEx(0, WndClass, L"Window", style, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, NULL, NULL, NULL, NULL);
 			if (!hwnd || hwnd == INVALID_HANDLE_VALUE)
-				return nullptr;
+				return false;
 
 			MARGINS margin = { 1,1,1,1 };
 			::DwmExtendFrameIntoClientArea(hwnd, &margin);
 
-			auto win = new Window();
-			win->hwnd_ = hwnd;
-
-			SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)win);
-			return win;
+			hwnd_ = hwnd;
+			SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)this);
+			return true;
 		}
 
-		const std::string& title() const
+		const char* title() const
 		{
 			return title_;
 		}
 
-		void setTitle(const std::string& text)
+		void setTitle(const char* text)
 		{
 			title_ = text;
-			auto titleText = utils::utf8ToUtf16(text.c_str());
-			SetWindowText(hwnd_, titleText.c_str());
+			auto titleText = utils::utf8ToUtf16(text);
+			SetWindowText(hwnd_, titleText.data);
 		}
 
 		void setSize(int width, int height)
@@ -418,18 +464,27 @@ namespace minui
 			SetWindowPos(hwnd_, NULL, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER);
 		}
 
-		void addWidget(Widget* w)
+		bool addWidget(Widget* w)
 		{
-			widgets_.push_back(w);
-			w->setWindow(this);
+			if (widgetIndex_ < WidgetCount)
+			{
+				widgets_[widgetIndex_++] = w;
+				w->setWindow(this);
+				return true;
+			}
+			return false;
 		}
 
-
-		void addTimer(int msec, const TimerFunc& fn)
+		bool addTimer(int msec, const TimerFunc& fn)
 		{
-			timers_.insert({ timerId_, fn });
-			::SetTimer(hwnd_, timerId_, msec, NULL);
-			timerId_++;
+			if (timerId_ < TimerCount)
+			{
+				timers_[timerId_] = fn;
+				::SetTimer(hwnd_, timerId_, msec, NULL);
+				timerId_++;
+				return true;
+			}
+			return false;
 		}
 
 		void show();
@@ -452,17 +507,6 @@ namespace minui
 		void setCloseable(bool v);
 
 	private:
-		Window()
-			: hwnd_(NULL)
-			, title_({0})
-			, close_(nullptr)
-			, timerId_(0)
-			, mouseWidget_(nullptr)
-			, mouseIn_(false)
-		{
-
-		}
-
 		friend class Application;
 
 		static constexpr LPCTSTR WndClass = L"minuiWindow";
@@ -488,7 +532,7 @@ namespace minui
 
 				if (window->onTestTitle(point))
 					return HTCAPTION;
-			
+
 				break; // default
 			}
 
@@ -524,6 +568,16 @@ namespace minui
 			case WM_LBUTTONUP:
 				window->onMouseButton(msg == WM_LBUTTONDOWN);
 				return 0;
+
+			case WM_DPICHANGED:
+			{
+				int dpi = HIWORD(wParam);
+				printf("DPI changed: %d\n", dpi);
+
+				RECT* rect = (RECT*)lParam;
+				SetWindowPos(hwnd, NULL, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top, SWP_NOZORDER | SWP_NOACTIVATE);
+				return 0;
+			}
 			}
 
 			return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -546,23 +600,21 @@ namespace minui
 
 		bool onTimer(int id)
 		{
-			auto iter = timers_.find(id);
-			if (iter != timers_.end())
-				return iter->second();
-			return false;
+			return timers_[id]();
 		}
 
 		void onPaint(HDC hdc, int width, int height)
 		{
 			Rect rect = { 0,0,width, height };
-			auto style = Styles::instance().getStyle("window");
+			auto style = Styles::instance().getStyle(Styles::Window);
 
 			Painter painter(hdc, width, height);
 			painter.frameRect(rect, 1, Color{ 130,130,130 });
-			painter.fillRect(Rect{0, 0, width, height}, style.backgroundColor);
+			painter.fillRect(Rect{ 0, 0, width, height }, style.backgroundColor);
 
-			for (auto widget : widgets_)
+			for (int i = 0; i < widgetIndex_; ++i)
 			{
+				Widget* widget = widgets_[i];
 				painter.setClipRect(widget->rect());
 				widget->onDraw(painter);
 			}
@@ -581,9 +633,9 @@ namespace minui
 			if (!mouseIn_)
 				mouseIn_ = trackMouseEvent(hwnd_);
 
-			for (auto iter = widgets_.rbegin(); iter != widgets_.rend(); iter++)
+			for (int i = widgetIndex_ - 1; i >= 0; --i)
 			{
-				Widget* widget = *iter;
+				Widget* widget = widgets_[i];
 				if (widget->visible() && widget->rect().contains(pt))
 				{
 					if (mouseWidget_ && widget != mouseWidget_)
@@ -613,13 +665,14 @@ namespace minui
 		}
 
 		HWND hwnd_;
-		std::string title_;
+		const char* title_;
 		Rect titleRect_;
 		Button* close_;
 		int timerId_;
+		int widgetIndex_;
 		OnCloseFunc onClose_;
-		std::map<int, TimerFunc> timers_;
-		std::vector<Widget*> widgets_;
+		TimerFunc timers_[TimerCount];
+		Widget* widgets_[WidgetCount];
 		Widget* mouseWidget_;
 		bool mouseIn_;
 
@@ -652,22 +705,32 @@ namespace minui
 			Styles& styles = Styles::instance();
 
 			auto style = Style::defaultStyle();
-			styles.addStyle("window", style);
-			styles.addStyle("label", style);
-			styles.addStyle("image", style);
+			styles.setStyle(Styles::Window, style);
+			styles.setStyle(Styles::Label, style);
+			styles.setStyle(Styles::Image, style);
 
 			style.backgroundColor = Color{ 230, 230, 230 };
-			styles.addStyle("button", style);
+			styles.setStyle(Styles::Button, style);
 
 			style.backgroundColor = Color{ 220,220,221 };
-			styles.addStyle("button:hover", style);
+			styles.setStyle(Styles::ButtonHover, style);
 
 			style.backgroundColor = Color{ 190,190,192 };
-			styles.addStyle("button:press", style);
+			styles.setStyle(Styles::ButtonPress, style);
 
 			style.color = Color{ 53,132,228 };
 			style.backgroundColor = Color{ 235,232,230 };
-			styles.addStyle("progress", style);
+			styles.setStyle(Styles::Progress, style);
+
+			style = Style::defaultStyle();
+			style.radius = 0;
+			styles.setStyle(Styles::CloseButton, style);
+
+			style.backgroundColor = Color{ 196,43,28 };
+			styles.setStyle(Styles::CloseButtonHover, style);
+
+			style.backgroundColor = Color{ 181,43,30 };
+			styles.setStyle(Styles::CloseButtonPress, style);
 
 			return err == 0;
 		}
@@ -692,35 +755,34 @@ namespace minui
 	class Label : public Widget
 	{
 	public:
-		static Label* create()
+		Label()
+			: text_(nullptr)
 		{
-			return new Label();
+			setId(Styles::Label);
 		}
 
-		const std::string& text() const
+		const char* text() const
 		{
 			return text_;
 		}
 
-		void setText(const std::string& text)
+		void setText(const char* text)
 		{
 			text_ = text;
 		}
 
 	protected:
-		Label()
-		{
-			setName("label");		
-		}
-
 		void draw(Painter& painter) override
 		{
-			auto style = Styles::instance().getStyle(name(), "label");
-			painter.drawText(rect(), text_.c_str(), style);
+			if (text_)
+			{
+				auto style = Styles::instance().getStyle(id());
+				painter.drawText(rect(), text_, style);
+			}
 		}
 
 	private:
-		std::string text_;
+		const char* text_;
 	};
 
 
@@ -734,17 +796,13 @@ namespace minui
 			Press
 		};
 
-		static const std::string& stateStyle(State state)
-		{
-			static std::string strings[] = { "", ":hover", ":press" };
-			return strings[state];
-		}
-
 		using OnClickFunc = std::function<void()>;
 
-		static Button* create()
+		Button()
+			: text_(nullptr)
+			, state_(Normal)
 		{
-			return new Button();
+			setId(Styles::Button);
 		}
 
 		State state() const
@@ -752,12 +810,12 @@ namespace minui
 			return state_;
 		}
 
-		const std::string& text() const
+		const char* text() const
 		{
-			return text_.c_str();
+			return text_;
 		}
 
-		void setText(const std::string& text)
+		void setText(const char* text)
 		{
 			text_ = text;
 		}
@@ -768,18 +826,12 @@ namespace minui
 		}
 
 	protected:
-		Button()
-			: state_(Normal)
-		{
-			setName("button");
-		}
-
 		void draw(Painter& painter) override
 		{
-			auto style = Styles::instance().getStyle(name() + stateStyle(state_), "button" + stateStyle(state_));
+			auto style = Styles::instance().getStyle(id() + state_);
 			painter.fillRoundRect(rect(), style.radius, style.backgroundColor);
-			if (text_.size())
-				painter.drawText(rect(), text_.c_str(), style);
+			if (text_)
+				painter.drawText(rect(), text_, style);
 		}
 
 		void mouseMove(bool leave) override
@@ -805,18 +857,18 @@ namespace minui
 		}
 
 	private:
-		std::string text_;
+		const char* text_;
 		State state_;
-		Style styles_[3];
 		OnClickFunc onClick_;
 	};
 
 	class Progress : public Widget
 	{
 	public:
-		static Progress* create()
+		Progress()
+			: step_(0)
 		{
-			return new Progress();
+			setId(Styles::Progress);
 		}
 
 		void setStep(float step)
@@ -829,15 +881,9 @@ namespace minui
 		}
 
 	protected:
-		Progress()
-			: step_(0)
-		{
-			setName("progress");
-		}
-
 		void draw(Painter& painter) override
 		{
-			auto style = Styles::instance().getStyle(name(), "progress");
+			auto style = Styles::instance().getStyle(id());
 			painter.fillRoundRect(rect(), style.radius, style.backgroundColor);
 
 			if (0 < step_)
@@ -855,32 +901,26 @@ namespace minui
 	class Image : public Widget
 	{
 	public:
-		static Image* create()
+		Image()
+			: bmp_(nullptr)
 		{
-			return new Image();
+			setId(Styles::Image);
 		}
 
-		void setBmpData(const uint8_t* data, size_t len)
+		void setBmpData(const void* data)
 		{
 			bmp_ = data;
-			bmpSize_ = len;
 		}
 
 	protected:
-		Image()
-			: bmp_(nullptr)
-			, bmpSize_(0)
-		{}
-
 		void draw(Painter& painter) override
 		{
 			if (bmp_)
-				painter.drawImage(rect(), bmp_, bmpSize_);
+				painter.drawImage(rect(), (const uint8_t*)bmp_);
 		}
 
 	private:
-		const uint8_t* bmp_;
-		size_t bmpSize_;
+		const void* bmp_;
 	};
 
 	inline void Window::show()
@@ -896,22 +936,12 @@ namespace minui
 
 		titleRect_ = Rect{ 0, 0, width - 48, 32 };
 
-		auto& styles = Styles::instance();
-		auto style = styles.getStyle("window");
-		style.radius = 0;
-		styles.addStyle("CloseButton", style);
-
-		style.backgroundColor = Color{ 196,43,28 };
-		styles.addStyle("CloseButton:hover", style);
-
-		style.backgroundColor = Color{ 181,43,30 };
-		styles.addStyle("CloseButton:press", style);
-
-		close_ = Button::create();
-		close_->setName("CloseButton");
+		close_ = new Button();
+		close_->setId(Styles::CloseButton);
 		close_->setRect(Rect{ titleRect_.width, 0,  48, 32 });
 		close_->setOnDraw([=](Painter& painter)
 			{
+				auto& style = Styles::instance().getStyle(Styles::CloseButton);
 				Rect rect = close_->rect();
 				// draw 12 x 12  x
 				int xCenter = rect.x + rect.width / 2;
