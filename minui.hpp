@@ -123,17 +123,28 @@ namespace minui
 		int fontSize;
 		const char* fontFamily[6];
 
-		static const Style& defaultStyle()
+		static const Style& defaultStyle(bool isDark = false)
 		{
-			static Style style =
+			static Style styles[2] =
 			{
-				Color{50, 50, 50},
-				Color{250, 250, 251},
-				6,
-				18,
-				{"Microsoft YaHei UI", "SimSun", "sans-seirf", "sans", "Ariel", NULL}
+				// light
+				{
+					Color{50, 50, 50},
+					Color{250, 250, 251},
+					6,
+					18,
+					{"Microsoft YaHei UI", "SimSun", "sans-seirf", "sans", "Ariel", NULL}
+				},
+				// dark
+				{
+					Color{250, 250, 250},
+					Color{ 34,34,38 },
+					6,
+					18,
+					{"Microsoft YaHei UI", "SimSun", "sans-seirf", "sans", "Ariel", NULL}
+				}
 			};
-			return style;
+			return styles[isDark];
 		}
 	};
 
@@ -744,36 +755,7 @@ namespace minui
 			RegisterClassEx(&wcx);
 			int err = GetLastError();
 
-			Styles& styles = Styles::instance();
-
-			auto style = Style::defaultStyle();
-			styles.setStyle(Styles::Window, style);
-			styles.setStyle(Styles::Label, style);
-			styles.setStyle(Styles::Image, style);
-
-			style.backgroundColor = Color{ 230, 230, 230 };
-			styles.setStyle(Styles::Button, style);
-
-			style.backgroundColor = Color{ 220,220,221 };
-			styles.setStyle(Styles::ButtonHover, style);
-
-			style.backgroundColor = Color{ 190,190,192 };
-			styles.setStyle(Styles::ButtonPress, style);
-
-			style.color = Color{ 53,132,228 };
-			style.backgroundColor = Color{ 235,232,230 };
-			styles.setStyle(Styles::Progress, style);
-
-			style = Style::defaultStyle();
-			style.radius = 0;
-			styles.setStyle(Styles::CloseButton, style);
-
-			style.backgroundColor = Color{ 196,43,28 };
-			styles.setStyle(Styles::CloseButtonHover, style);
-
-			style.backgroundColor = Color{ 181,43,30 };
-			styles.setStyle(Styles::CloseButtonPress, style);
-
+			setStyles();
 			return err == 0;
 		}
 
@@ -790,6 +772,79 @@ namespace minui
 		static void quit()
 		{
 			PostQuitMessage(0);
+		}
+
+		// return isDarkMode
+		static bool setStyles()
+		{
+			bool darkMode = isDarkMode();
+			Styles& styles = Styles::instance();
+			auto style = Style::defaultStyle(darkMode);
+
+			styles.setStyle(Styles::Window, style);
+			styles.setStyle(Styles::Label, style);
+			styles.setStyle(Styles::Image, style);
+
+			if (!darkMode)
+			{
+				// light
+				style.backgroundColor = Color{ 230, 230, 230 };
+				styles.setStyle(Styles::Button, style);
+
+				style.backgroundColor = Color{ 220,220,221 };
+				styles.setStyle(Styles::ButtonHover, style);
+
+				style.backgroundColor = Color{ 190,190,192 };
+				styles.setStyle(Styles::ButtonPress, style);
+
+				style.color = Color{ 53,132,228 };
+				style.backgroundColor = Color{ 235,232,230 };
+				styles.setStyle(Styles::Progress, style);
+			}
+			else
+			{
+				style.backgroundColor = Color{ 56,56,59 };
+				styles.setStyle(Styles::Button, style);
+
+				style.backgroundColor = Color{ 67,67,70 };
+				styles.setStyle(Styles::ButtonHover, style);
+
+				style.backgroundColor = Color{ 100,100,103 };
+				styles.setStyle(Styles::ButtonPress, style);
+
+				style.color = Color{ 53,132,228 };
+				style.backgroundColor = Color{ 81,81,85 };
+				styles.setStyle(Styles::Progress, style);
+			}
+
+			style = Style::defaultStyle(darkMode);
+			style.radius = 0;
+			styles.setStyle(Styles::CloseButton, style);
+
+			style.backgroundColor = Color{ 196,43,28 };
+			styles.setStyle(Styles::CloseButtonHover, style);
+
+			style.backgroundColor = Color{ 181,43,30 };
+			styles.setStyle(Styles::CloseButtonPress, style);
+
+			return darkMode;
+		}
+
+		static bool isDarkMode()
+		{
+			HKEY key;
+			auto ret = RegOpenKeyEx(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 0, KEY_READ, &key);
+			if (ret != ERROR_SUCCESS)
+				return false;
+
+			DWORD type;
+			BYTE buf[8];
+			DWORD len = 8;
+			ret = RegQueryValueEx(key, L"AppsUseLightTheme", NULL, &type, buf, &len);
+			if (ret != ERROR_SUCCESS)
+				return false;
+
+			return buf[0] == 0;
 		}
 
 	private:
