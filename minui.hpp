@@ -36,6 +36,11 @@ namespace minui
 		{
 			MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, len);
 		}
+
+		inline int dpiScale(int origin, int dpi)
+		{
+			return MulDiv(origin, dpi, 96);
+		}
 	}
 
 	class Handle
@@ -68,6 +73,11 @@ namespace minui
 	{
 		int x;
 		int y;
+
+		Point scale(float num) const
+		{
+			return { int(float(x) * num), int(float(y) * num) };
+		}
 	};
 
 	struct Rect
@@ -82,9 +92,26 @@ namespace minui
 			return x <= pt.x && pt.x <= x + width && y <= pt.y && pt.y < y + height;
 		}
 
-		RECT toRect(int scale = 1) const
+		Rect scale(float num) const
 		{
-			return { x * scale, y * scale, x * scale + width * scale, y * scale + height * scale };
+			return
+			{
+				int(float(x) * num),
+				int(float(y) * num),
+				int(float(width) * num),
+				int(float(height) * num)
+			};
+		}
+
+		RECT toRect(float scale = 1) const
+		{
+			return
+			{
+				int(float(x) * scale),
+				int(float(y) * scale),
+				int(float(x) * scale + float(width) * scale),
+				int(float(y) * scale + float(height) * scale)
+			};
 		}
 	};
 
@@ -230,10 +257,11 @@ namespace minui
 		void frameRect(const Rect& rect, int lineWidth, Color color)
 		{
 			RECT frame = rect.toRect(ss_);
-			// TODO: lineWidth
 			HBRUSH brush = CreateSolidBrush(color.toColorRef());
-			FrameRect(mdc_, &frame, brush);
+			HRGN rgn = CreateRectRgn(frame.left, frame.top, frame.right, frame.bottom);
+			FrameRgn(mdc_, rgn, brush, lineWidth * ss_, lineWidth * ss_);
 			DeleteObject(brush);
+			DeleteObject(rgn);
 		}
 
 		void fillRect(const Rect& rect, Color color)
@@ -267,12 +295,16 @@ namespace minui
 	private:
 		friend class Window;
 
-		Painter(HDC hdc, int width, int height)
+		Painter(HDC hdc, int width, int height, float scale)
 			: hdc_(hdc)
-			, ss_(2) // 2x SSAA
+			, scale_(scale)
+			, ss_(4) // 4x SSAA
 			, width_(width)
 			, height_(height)
 		{
+			if (scale_ > ss_)
+				ss_ = scale_; // 缩放大于超分的话，没有必要抗锯齿了
+
 			mdc_ = CreateCompatibleDC(hdc);
 			bitmap_ = CreateCompatibleBitmap(hdc, width * ss_, height * ss_);
 			old_ = (HBITMAP)SelectObject(mdc_, bitmap_);
@@ -281,7 +313,7 @@ namespace minui
 		~Painter()
 		{
 			SetStretchBltMode(hdc_, HALFTONE);
-			StretchBlt(hdc_, 0, 0, width_, height_, mdc_, 0, 0, width_ * ss_, height_ * ss_, SRCCOPY);
+			StretchBlt(hdc_, 0, 0, width_ * scale_, height_ * scale_, mdc_, 0, 0, width_ * ss_, height_ * ss_, SRCCOPY);
 			SelectObject(mdc_, old_);
 			DeleteDC(mdc_);
 			DeleteObject(bitmap_);
@@ -320,7 +352,8 @@ namespace minui
 		HDC mdc_;
 		HBITMAP bitmap_;
 		HBITMAP old_;
-		int ss_;
+		float scale_;
+		float ss_;
 		int width_;
 		int height_;
 	};
@@ -425,9 +458,12 @@ namespace minui
 		Window()
 			: hwnd_(NULL)
 			, title_(nullptr)
+			, rect_{ 0 }
 			, close_(nullptr)
 			, timerId_(0)
 			, widgetIndex_(0)
+			, dpi_(96)
+			, scale_(1.0)
 			, mouseWidget_(nullptr)
 			, mouseIn_(false)
 		{
@@ -440,20 +476,7 @@ namespace minui
 				DestroyWindow(hwnd_);
 		}
 
-		bool create()
-		{
-			int style = WS_OVERLAPPED | WS_CAPTION | WS_THICKFRAME;
-			HWND hwnd = CreateWindowEx(0, WndClass, L"Window", style, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, NULL, NULL, NULL, NULL);
-			if (!hwnd || hwnd == INVALID_HANDLE_VALUE)
-				return false;
-
-			MARGINS margin = { 1,1,1,1 };
-			::DwmExtendFrameIntoClientArea(hwnd, &margin);
-
-			hwnd_ = hwnd;
-			SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)this);
-			return true;
-		}
+		bool create();
 
 		const char* title() const
 		{
@@ -469,7 +492,8 @@ namespace minui
 
 		void setSize(int width, int height)
 		{
-			SetWindowPos(hwnd_, NULL, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER);
+			rect_ = Rect{ 0, 0, width, height };
+			SetWindowPos(hwnd_, NULL, 0, 0, utils::dpiScale(width, dpi_), utils::dpiScale(height, dpi_), SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED);
 		}
 
 		bool addWidget(Widget* w)
@@ -527,6 +551,9 @@ namespace minui
 
 			switch (msg)
 			{
+			case WM_ERASEBKGND:
+				return 0;
+
 			case WM_NCCALCSIZE:
 				return 0;
 
@@ -567,25 +594,22 @@ namespace minui
 
 			case WM_MOUSELEAVE:
 			case WM_MOUSEMOVE:
-			{
-				POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-				window->onMouseMove(Point{ pt.x, pt.y }, msg == WM_MOUSELEAVE);
+				window->onMouseMove(Point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) }, msg == WM_MOUSELEAVE);
 				return 0;
-			}
+			
 			case WM_LBUTTONDOWN:
 			case WM_LBUTTONUP:
 				window->onMouseButton(msg == WM_LBUTTONDOWN);
 				return 0;
 
-			case WM_DPICHANGED:
+			case 0x02E0: // WM_DPICHANGED
 			{
-				int dpi = HIWORD(wParam);
-				printf("DPI changed: %d\n", dpi);
-
+				window->onDpiChanged(HIWORD(wParam));
 				RECT* rect = (RECT*)lParam;
-				SetWindowPos(hwnd, NULL, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top, SWP_NOZORDER | SWP_NOACTIVATE);
+				SetWindowPos(hwnd, NULL, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 				return 0;
 			}
+
 			}
 
 			return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -610,15 +634,20 @@ namespace minui
 		{
 			return timers_[id]();
 		}
+		
+		void onDpiChanged(int dpi)
+		{
+			dpi_ = dpi;
+			scale_ = float(dpi) / 96.0;
+		}
 
 		void onPaint(HDC hdc, int width, int height)
 		{
-			Rect rect = { 0,0,width, height };
+			auto rect = Rect{ 0,0,width, height }.scale(scale_);
 			auto style = Styles::instance().getStyle(Styles::Window);
 
-			Painter painter(hdc, width, height);
-			painter.frameRect(rect, 1, Color{ 130,130,130 });
-			painter.fillRect(Rect{ 0, 0, width, height }, style.backgroundColor);
+			Painter painter(hdc, rect.width, rect.height, scale_);
+			painter.fillRect(rect, style.backgroundColor);
 
 			for (int i = 0; i < widgetIndex_; ++i)
 			{
@@ -644,7 +673,7 @@ namespace minui
 			for (int i = widgetIndex_ - 1; i >= 0; --i)
 			{
 				Widget* widget = widgets_[i];
-				if (widget->visible() && widget->rect().contains(pt))
+				if (widget->visible() && widget->rect().scale(scale_).contains(pt))
 				{
 					if (mouseWidget_ && widget != mouseWidget_)
 						mouseWidget_->mouseMove(true); // mouse leave
@@ -669,15 +698,18 @@ namespace minui
 
 		bool onTestTitle(Point pt)
 		{
-			return titleRect_.contains(pt);
+			return titleRect_.scale(scale_).contains(pt);
 		}
 
 		HWND hwnd_;
 		const char* title_;
+		Rect rect_;
 		Rect titleRect_;
 		Button* close_;
 		int timerId_;
 		int widgetIndex_;
+		int dpi_;
+		float scale_;
 		OnCloseFunc onClose_;
 		TimerFunc timers_[TimerCount];
 		Widget* widgets_[WidgetCount];
@@ -697,6 +729,8 @@ namespace minui
 	public:
 		static bool initialize()
 		{
+			initDpiAwareness();
+
 			WNDCLASSEX wcx = { 0 };
 			wcx.cbSize = sizeof(WNDCLASSEX);
 			wcx.style = CS_HREDRAW | CS_VREDRAW;
@@ -756,6 +790,25 @@ namespace minui
 		static void quit()
 		{
 			PostQuitMessage(0);
+		}
+
+	private:
+		static bool initDpiAwareness()
+		{
+			using SetProcessDpiAwarenessFunc = BOOL(*)(void*);
+			auto setDpiAwareness = (SetProcessDpiAwarenessFunc)GetProcAddress(GetModuleHandle(TEXT("User32.dll")), "SetProcessDpiAwarenessContext");
+			if (setDpiAwareness)
+				return setDpiAwareness((void*)-4); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+			return false;
+		}
+
+		friend class Window;
+		static int getDpiForWindow(HWND hwnd)
+		{
+			using GetDpiForWindowFunc = UINT(*)(void*);
+			static auto getDpiForWindowFunc = (GetDpiForWindowFunc)GetProcAddress(GetModuleHandle(TEXT("User32.dll")), "GetDpiForWindow");
+			static auto getDpiForWindow = getDpiForWindowFunc ? getDpiForWindowFunc : [](void*)->UINT { return 96; };
+			return getDpiForWindow(hwnd);
 		}
 	};
 
@@ -931,18 +984,29 @@ namespace minui
 		const void* bmp_;
 	};
 
+	inline  bool Window::create()
+	{
+		int style = WS_OVERLAPPED | WS_CAPTION | WS_THICKFRAME;
+		HWND hwnd = CreateWindowEx(0, WndClass, L"Window", style, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, NULL, NULL, NULL, NULL);
+		if (!hwnd || hwnd == INVALID_HANDLE_VALUE)
+			return false;
+
+		onDpiChanged(Application::getDpiForWindow(hwnd));
+
+		MARGINS margin = { 1,1,1,1 };
+		::DwmExtendFrameIntoClientArea(hwnd, &margin);
+
+		hwnd_ = hwnd;
+		SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)this);
+		return true;
+	}
+
 	inline void Window::show()
 	{
 		UpdateWindow(hwnd_);
 		ShowWindow(hwnd_, SW_NORMAL);
 
-		RECT rect;
-		GetClientRect(hwnd_, &rect);
-
-		int width = rect.right - rect.left;
-		int height = rect.bottom - rect.top;
-
-		titleRect_ = Rect{ 0, 0, width - 48, 32 };
+		titleRect_ = Rect{ 0, 0, rect_.width - 48, 32 };
 
 		close_ = new Button();
 		close_->setId(Styles::CloseButton);
