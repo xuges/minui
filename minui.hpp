@@ -755,7 +755,7 @@ namespace minui
 			RegisterClassEx(&wcx);
 			int err = GetLastError();
 
-			setStyles();
+			setStyles(isDarkMode());
 			return err == 0;
 		}
 
@@ -774,10 +774,8 @@ namespace minui
 			PostQuitMessage(0);
 		}
 
-		// return isDarkMode
-		static bool setStyles()
+		static void setStyles(bool darkMode)
 		{
-			bool darkMode = isDarkMode();
 			Styles& styles = Styles::instance();
 			auto style = Style::defaultStyle(darkMode);
 
@@ -803,6 +801,7 @@ namespace minui
 			}
 			else
 			{
+				// dark
 				style.backgroundColor = Color{ 56,56,59 };
 				styles.setStyle(Styles::Button, style);
 
@@ -826,8 +825,6 @@ namespace minui
 
 			style.backgroundColor = Color{ 181,43,30 };
 			styles.setStyle(Styles::CloseButtonPress, style);
-
-			return darkMode;
 		}
 
 		static bool isDarkMode()
@@ -838,12 +835,10 @@ namespace minui
 				return false;
 
 			DWORD type;
-			BYTE buf[8];
+			BYTE buf[8] = { 0 };
 			DWORD len = 8;
-			ret = RegQueryValueEx(key, L"AppsUseLightTheme", NULL, &type, buf, &len);
-			if (ret != ERROR_SUCCESS)
-				return false;
-
+			RegQueryValueEx(key, L"AppsUseLightTheme", NULL, &type, buf, &len);
+			RegCloseKey(key);
 			return buf[0] == 0;
 		}
 
