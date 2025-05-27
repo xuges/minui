@@ -31,6 +31,10 @@ It has these widgets:
 
 
 
+![](doc/hidpi.gif)
+
+
+
 ### Platform
 
 * Windows 10, 11 (tested)
