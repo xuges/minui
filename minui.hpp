@@ -5,6 +5,7 @@
 #include <windowsx.h>
 #include <dwmapi.h>
 
+#include <string>
 #include <functional>
 #include <cstdint>
 
@@ -111,6 +112,7 @@ namespace minui
 
 	struct Style
 	{
+		const char* name;
 		Color color;
 		Color backgroundColor;
 		int radius;
@@ -123,6 +125,7 @@ namespace minui
 			{
 				// light
 				{
+					"default-light",
 					Color{50, 50, 50},
 					Color{250, 250, 251},
 					6,
@@ -131,6 +134,7 @@ namespace minui
 				},
 				// dark
 				{
+					"default-dark",
 					Color{250, 250, 250},
 					Color{ 34,34,38 },
 					6,
@@ -145,21 +149,7 @@ namespace minui
 	class Styles : public Handle
 	{
 	public:
-		enum Id
-		{
-			Window,
-			Button,
-			ButtonHover,
-			ButtonPress,
-			Label,
-			Image,
-			Progress,
-			CloseButton,
-			CloseButtonHover,
-			CloseButtonPress,
-			Custom,
-			Count = 128
-		};
+		enum { MaxCount = 32 };
 
 		static Styles& instance()
 		{
@@ -167,29 +157,62 @@ namespace minui
 			return styles;
 		}
 
-		void setStyle(int id, const Style& style)
+		bool setStyle(const char* name, Style style)
 		{
-			if (0 <= id && id < Count)
-				styles_[id] = style;
+			style.name = name;
+			int index = findStyle(name);
+
+			if (index == -1)
+				return addStyle(style);
+
+			styles_[index] = style;
+			return true;
+
 		}
 
-		const Style& getStyle(int id) const
+		const Style& getStyle(const char* name) const
 		{
-			if (0 <= id && id < Count)
-				return styles_[id];
-			return styles_[0];
+			int index = findStyle(name);
+			if (index != -1)
+				return styles_[index];
+
+			return Style::defaultStyle();
 		}
+
+		void update();
 
 	private:
 		Styles()
 		{
-			for (size_t i = 0; i < Count; ++i)
-				styles_[i] = Style::defaultStyle();
+
 		}
 
-		Style styles_[Count];
-	};
+		int findStyle(const char* name) const
+		{
+			for (int i = 0; i < MaxCount; ++i)
+			{
 
+				const Style& style = styles_[i];
+				if (!style.name)
+					return -1;
+
+				if (strcmp(style.name, name) == 0)
+					return i;
+			}
+			return -1;
+		}
+
+		bool addStyle(Style style)
+		{
+			if (index_ < MaxCount)
+				styles_[index_++] = style;
+			return index_ <= MaxCount;
+		}
+
+	private:
+		Style styles_[MaxCount] = { 0 };
+		int index_ = 0;
+	};
 
 	class Painter : public Handle
 	{
@@ -410,14 +433,14 @@ namespace minui
 
 		virtual ~Widget() = default;
 
-		int id() const
+		const char* styleName() const
 		{
-			return id_;
+			return name_;
 		}
 
-		void setId(int id)
+		void setStyleName(const char* name)
 		{
-			id_ = id;
+			name_ = name;
 		}
 
 		const Rect& rect() const
@@ -443,11 +466,7 @@ namespace minui
 		void update();
 
 	protected:
-		Widget()
-			: window_(nullptr)
-			, rect_{ 0 }
-			, visible_(true)
-		{}
+		Widget() = default;
 
 		virtual void draw(Painter& painter) {}
 		virtual void mouseMove(bool leave) {}
@@ -476,12 +495,11 @@ namespace minui
 		}
 
 	private:
-		Rect rect_;
-		Style style_;
+		Rect rect_ = { 0 };
+		const char* name_ = nullptr;
+		Window* window_ = nullptr;
 		OnDrawFunc onDraw_;
-		Window* window_;
-		int id_;
-		bool visible_;
+		bool visible_ = true;
 	};
 
 	class Button;
@@ -687,7 +705,7 @@ namespace minui
 		void onPaint(HDC hdc, int width, int height)
 		{
 			auto rect = Rect{ 0,0,width, height }.scale(1.0 / scale_);
-			auto style = Styles::instance().getStyle(Styles::Window);
+			auto style = Styles::instance().getStyle("window");
 
 			Painter painter(hdc, rect, scale_, scale_);
 			painter.fillRect(rect, style.backgroundColor);
@@ -811,52 +829,52 @@ namespace minui
 			Styles& styles = Styles::instance();
 			auto style = Style::defaultStyle(darkMode);
 
-			styles.setStyle(Styles::Window, style);
-			styles.setStyle(Styles::Label, style);
-			styles.setStyle(Styles::Image, style);
+			styles.setStyle("window", style);
+			styles.setStyle("label", style);
+			styles.setStyle("image", style);
 
 			if (!darkMode)
 			{
 				// light
 				style.backgroundColor = Color{ 230, 230, 230 };
-				styles.setStyle(Styles::Button, style);
+				styles.setStyle("button", style);
 
 				style.backgroundColor = Color{ 220,220,221 };
-				styles.setStyle(Styles::ButtonHover, style);
+				styles.setStyle("button:hover", style);
 
 				style.backgroundColor = Color{ 190,190,192 };
-				styles.setStyle(Styles::ButtonPress, style);
+				styles.setStyle("button:press", style);
 
 				style.color = Color{ 53,132,228 };
 				style.backgroundColor = Color{ 235,232,230 };
-				styles.setStyle(Styles::Progress, style);
+				styles.setStyle("progress", style);
 			}
 			else
 			{
 				// dark
 				style.backgroundColor = Color{ 56,56,59 };
-				styles.setStyle(Styles::Button, style);
+				styles.setStyle("button", style);
 
 				style.backgroundColor = Color{ 67,67,70 };
-				styles.setStyle(Styles::ButtonHover, style);
+				styles.setStyle("button:hover", style);
 
 				style.backgroundColor = Color{ 100,100,103 };
-				styles.setStyle(Styles::ButtonPress, style);
+				styles.setStyle("button:press", style);
 
 				style.color = Color{ 53,132,228 };
 				style.backgroundColor = Color{ 81,81,85 };
-				styles.setStyle(Styles::Progress, style);
+				styles.setStyle("progress", style);
 			}
 
 			style = Style::defaultStyle(darkMode);
 			style.radius = 0;
-			styles.setStyle(Styles::CloseButton, style);
+			styles.setStyle("CloseButton", style);
 
 			style.backgroundColor = Color{ 196,43,28 };
-			styles.setStyle(Styles::CloseButtonHover, style);
+			styles.setStyle("CloseButton:hover", style);
 
 			style.backgroundColor = Color{ 181,43,30 };
-			styles.setStyle(Styles::CloseButtonPress, style);
+			styles.setStyle("CloseButton:press", style);
 		}
 
 		static bool isDarkMode()
@@ -901,7 +919,7 @@ namespace minui
 		Label()
 			: text_(nullptr)
 		{
-			setId(Styles::Label);
+			setStyleName("label");
 		}
 
 		const char* text() const
@@ -919,7 +937,7 @@ namespace minui
 		{
 			if (text_)
 			{
-				auto style = Styles::instance().getStyle(id());
+				auto style = Styles::instance().getStyle(styleName());
 				painter.drawText(rect(), text_, style);
 			}
 		}
@@ -939,13 +957,19 @@ namespace minui
 			Press
 		};
 
+		static const char* stateString(State state)
+		{
+			const char* strings[] = { "", ":hover", ":press" };
+			return strings[state];
+		}
+
 		using OnClickFunc = std::function<void()>;
 
 		Button()
 			: text_(nullptr)
 			, state_(Normal)
 		{
-			setId(Styles::Button);
+			setStyleName("button");
 		}
 
 		State state() const
@@ -971,7 +995,8 @@ namespace minui
 	protected:
 		void draw(Painter& painter) override
 		{
-			auto style = Styles::instance().getStyle(id() + state_);
+			auto name = std::string(styleName()) + stateString(state_);
+			auto style = Styles::instance().getStyle(name.c_str());
 			painter.withAA(rect(), [=](Painter& aaPainter)
 				{
 					aaPainter.fillRoundRect(rect(), style.radius, style.backgroundColor);
@@ -1016,7 +1041,7 @@ namespace minui
 		Progress()
 			: step_(0)
 		{
-			setId(Styles::Progress);
+			setStyleName("progress");
 		}
 
 		void setStep(float step)
@@ -1031,7 +1056,7 @@ namespace minui
 	protected:
 		void draw(Painter& painter) override
 		{
-			auto style = Styles::instance().getStyle(id());
+			auto style = Styles::instance().getStyle(styleName());
 			painter.withAA(rect(), [=](Painter& aaPainter)
 				{
 					aaPainter.fillRoundRect(rect(), style.radius, style.backgroundColor);
@@ -1055,7 +1080,7 @@ namespace minui
 		Image()
 			: bmp_(nullptr)
 		{
-			setId(Styles::Image);
+			setStyleName("image");
 		}
 
 		void setBmpData(const void* data)
@@ -1105,14 +1130,15 @@ namespace minui
 		titleRect_ = Rect{ 0, 0, rect_.width - 48, 32 };
 
 		close_ = new Button();
-		close_->setId(Styles::CloseButton);
+		close_->setStyleName("CloseButton");
 		close_->setRect(Rect{ titleRect_.width, 0,  48, 32 });
 		close_->setOnDraw([=](Painter& painter)
 			{
 				Rect rect = close_->rect();
 				painter.withAA(rect, [=](Painter& aaPainter)
 					{
-						auto& style = Styles::instance().getStyle(Styles::CloseButton);
+						auto name = std::string("CloseButton") + Button::stateString(close_->state());
+						auto& style = Styles::instance().getStyle(name.c_str());
 						// draw 12 x 12  x
 						int xCenter = rect.x + rect.width / 2;
 						int yCenter = rect.y + rect.height / 2;

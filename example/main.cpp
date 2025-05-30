@@ -15,13 +15,11 @@ int main()
 	Application::initialize();
 
 	// custom styles
-	enum MyStyles
-	{
-		TitleLabel = Styles::Custom + 1,
-		ColorLabel,
-		ColorButton,
-	};
-
+	static constexpr const char* TitleLabel = "TitleLabel";
+	static constexpr const char* ColorLabel = "ColorLabel";
+	static constexpr const char* ColorButton = "ColorButton";
+	static constexpr const char* ColorButtonHover = "ColorButton:hover";
+	static constexpr const char* ColorButtonPress = "ColorButton:press";
 
 	Window window;
 	window.create();
@@ -36,7 +34,7 @@ int main()
 
 	Label title;
 	title.setRect({ 0, 60, 600, 40 });
-	title.setId(MyStyles::TitleLabel);
+	title.setStyleName(TitleLabel);
 	title.setText("MinUI Example");
 	window.addWidget(&title);
 
@@ -53,7 +51,7 @@ int main()
 	Label label3;
 	label3.setRect(Rect{ label2.rect().x, label2.rect().y + label2.rect().height + 10, label2.rect().width, 30});
 	label3.setText("Custom style are supported.");
-	label3.setId(MyStyles::ColorLabel);
+	label3.setStyleName(ColorLabel);
 	window.addWidget(&label3);
 
 	Button button1;
@@ -63,7 +61,7 @@ int main()
 
 	Button button2;
 	button2.setRect(Rect{ button1.rect().x + button1.rect().width + 10, button1.rect().y, 80, 30 });
-	button2.setId(MyStyles::ColorButton);
+	button2.setStyleName(ColorButton);
 	button2.setText("Styled");
 	window.addWidget(&button2);
 
@@ -143,21 +141,25 @@ int main()
 			Application::setStyles(darkMode);
 
 			auto& styles = Styles::instance();
-			auto style = styles.getStyle(Styles::Label);
-			style.fontSize = 32;
-			styles.setStyle(MyStyles::TitleLabel, style);
+			auto style = styles.getStyle("label");
 
-			style = styles.getStyle(Styles::Label);
-			style.color = Color{ 0, 180, 0 };
-			styles.setStyle(MyStyles::ColorLabel, style);
+			auto titleStyle = style;
+			titleStyle.fontSize = 32;
+			styles.setStyle(TitleLabel, titleStyle);
 
-			style = styles.getStyle(Styles::Button);
-			style.backgroundColor = Color{ 53, 132, 220 };
-			styles.setStyle(MyStyles::ColorButton, style);
-			style.backgroundColor = Color{ 73, 140, 230 };
-			styles.setStyle(MyStyles::ColorButton + Button::Hover, style);
-			style.backgroundColor = Color{ 42, 106, 183 };
-			styles.setStyle(MyStyles::ColorButton + Button::Press, style);
+			auto colorLabel = style;
+			colorLabel.color = Color{ 0, 180, 0 };
+			styles.setStyle(ColorLabel, colorLabel);
+
+			auto colorButton = style;
+			colorButton.backgroundColor = Color{ 53, 132, 220 };
+			styles.setStyle(ColorButton, colorButton);
+
+			colorButton.backgroundColor = Color{ 73, 140, 230 };
+			styles.setStyle(ColorButtonHover, colorButton);
+
+			colorButton.backgroundColor = Color{ 42, 106, 183 };
+			styles.setStyle(ColorButtonPress, colorButton);
 
 			dark = darkMode;
 			button3.setText(dark ? "Light" : "Dark");
