@@ -103,15 +103,9 @@ namespace minui
 			};
 		}
 
-		RECT toRect(float scale = 1) const
+		RECT toRect() const
 		{
-			return
-			{
-				int(float(x) * scale),
-				int(float(y) * scale),
-				int(float(x) * scale + float(width) * scale),
-				int(float(y) * scale + float(height) * scale)
-			};
+			return { x, y, x + width, y + height };
 		}
 	};
 
@@ -200,18 +194,22 @@ namespace minui
 	class Painter : public Handle
 	{
 	public:
-		void drawPixel(int x, int y, Color color)
+		template <typename F> // F=void(Painter&)
+		void withAA(const Rect& rect, const F& fn) const
 		{
-			SetPixel(mdc_, x, y, color.toColorRef());
+			Painter painter(mdc_, rect, scale_, 4);
+			fn(painter);
 		}
 
-		void drawLine(int x, int y, int x1, int y1, int width, Color color)
+		void drawLine(int x, int y, int x1, int y1, int lineWidth, Color color)
 		{
-			HPEN pen = CreatePen(PS_SOLID, width * ss_, color.toColorRef());
+			HPEN pen = CreatePen(PS_SOLID, transform(lineWidth), color.toColorRef());
 			HPEN old = (HPEN)SelectObject(mdc_, pen);
 
-			MoveToEx(mdc_, x * ss_, y * ss_, NULL);
-			LineTo(mdc_, x1 * ss_, y1 * ss_);
+			Point p0 = transform(Point{ x, y });
+			Point p1 = transform(Point{ x1, y1 });
+			MoveToEx(mdc_, p0.x, p0.y, NULL);
+			LineTo(mdc_, p1.x, p1.y);
 
 			SelectObject(mdc_, old);
 			DeleteObject(pen);
@@ -226,13 +224,16 @@ namespace minui
 
 			SetBkMode(mdc_, TRANSPARENT);
 			auto str = utils::utf8ToUtf16(text);
-			auto drawRect = rect.toRect(ss_);
+			auto drawRect = rect.scale(scale_).toRect();
 			auto oldColor = SetTextColor(mdc_, style.color.toColorRef());
 			DrawText(mdc_, str.data, str.length, &drawRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 			SetTextColor(mdc_, oldColor);
 
 			if (font)
+			{
 				SelectObject(mdc_, oldFont);
+				DeleteObject(font);
+			}
 		}
 
 		void drawImage(const Rect& rect, const uint8_t* bmp)
@@ -253,13 +254,17 @@ namespace minui
 			const uint8_t* pixels = bmp + bfh->bfOffBits;
 
 			HDC dc = CreateCompatibleDC(mdc_);
-			HBITMAP bitmap = CreateCompatibleBitmap(hdc_, width, height);
+			HBITMAP bitmap = CreateCompatibleBitmap(mdc_, width, height);
 			HBITMAP old = (HBITMAP)SelectObject(dc, bitmap);
 			BITMAPINFO bi = { 0 };
 			bi.bmiHeader = *bih;
 			SetDIBits(dc, bitmap, 0, height, pixels, &bi, DIB_RGB_COLORS);
-			RECT rt = rect.toRect(ss_);
+
+			RECT rt = transform(rect).toRect();
+			SetStretchBltMode(mdc_, HALFTONE);
+			SetBrushOrgEx(mdc_, 0, 0, NULL);
 			StretchBlt(mdc_, rt.left, rt.top, rt.right - rt.left, rt.bottom - rt.top, dc, 0, 0, width, height, SRCCOPY);
+
 			SelectObject(dc, old);
 			DeleteObject(bitmap);
 			DeleteDC(dc);
@@ -267,17 +272,17 @@ namespace minui
 
 		void frameRect(const Rect& rect, int lineWidth, Color color)
 		{
-			RECT frame = rect.toRect(ss_);
+			RECT frame = transform(rect).toRect();
 			HBRUSH brush = CreateSolidBrush(color.toColorRef());
 			HRGN rgn = CreateRectRgn(frame.left, frame.top, frame.right, frame.bottom);
-			FrameRgn(mdc_, rgn, brush, lineWidth * ss_, lineWidth * ss_);
+			FrameRgn(mdc_, rgn, brush, transform(lineWidth), transform(lineWidth));
 			DeleteObject(brush);
 			DeleteObject(rgn);
 		}
 
 		void fillRect(const Rect& rect, Color color)
 		{
-			RECT fill = rect.toRect(ss_);
+			RECT fill = transform(rect).toRect();
 			HBRUSH brush = CreateSolidBrush(color.toColorRef());
 			FillRect(mdc_, &fill, brush);
 			DeleteObject(brush);
@@ -286,8 +291,8 @@ namespace minui
 		void fillRoundRect(const Rect& rect, int radius, Color color)
 		{
 			HBRUSH brush = CreateSolidBrush(color.toColorRef());
-			RECT rt = rect.toRect(ss_);
-			HRGN hrgn = CreateRoundRectRgn(rt.left, rt.top, rt.right, rt.bottom, radius * ss_, radius * ss_);
+			RECT rt = transform(rect).toRect();
+			HRGN hrgn = CreateRoundRectRgn(rt.left, rt.top, rt.right, rt.bottom, transform(radius), transform(radius));
 			FillRgn(mdc_, hrgn, brush);
 			DeleteObject(hrgn);
 			DeleteObject(brush);
@@ -296,9 +301,9 @@ namespace minui
 		void roundRect(const Rect& rect, int lineWidth, int radius, Color color)
 		{
 			HBRUSH brush = CreateSolidBrush(color.toColorRef());
-			RECT rt = rect.toRect(ss_);
-			HRGN hrgn = CreateRoundRectRgn(rt.left, rt.top, rt.right, rt.bottom, radius * ss_, radius * ss_);
-			FrameRgn(mdc_, hrgn, brush, lineWidth * ss_, lineWidth * ss_);
+			RECT rt = transform(rect).toRect();
+			HRGN hrgn = CreateRoundRectRgn(rt.left, rt.top, rt.right, rt.bottom, transform(radius), transform(radius));
+			FrameRgn(mdc_, hrgn, brush, transform(lineWidth), transform(lineWidth));
 			DeleteObject(hrgn);
 			DeleteObject(brush);
 		}
@@ -306,33 +311,43 @@ namespace minui
 	private:
 		friend class Window;
 
-		Painter(HDC hdc, int width, int height, float scale)
+		Painter(HDC hdc, const Rect& rect, float scale, float ss)
 			: hdc_(hdc)
+			, rect_(rect)
+			, sRect_(rect.scale(scale))
+			, ssRect_(rect.scale(ss))
 			, scale_(scale)
-			, ss_(4) // 4x SSAA
-			, width_(width)
-			, height_(height)
+			, ss_(ss)
 		{
 			if (scale_ > ss_)
-				ss_ = scale_; // 缩放大于超分的话，没有必要抗锯齿了
+			{
+				ss_ = scale_;
+				ssRect_ = rect.scale(ss_);
+			}
+			ssRect_.x = 0;
+			ssRect_.y = 0;
 
 			mdc_ = CreateCompatibleDC(hdc);
-			bitmap_ = CreateCompatibleBitmap(hdc, width * ss_, height * ss_);
+			bitmap_ = CreateCompatibleBitmap(hdc, ssRect_.width, ssRect_.height);
 			old_ = (HBITMAP)SelectObject(mdc_, bitmap_);
+			SetStretchBltMode(mdc_, HALFTONE);
+			SetBrushOrgEx(mdc_, 0, 0, NULL);
+			StretchBlt(mdc_, ssRect_.x, ssRect_.y, ssRect_.width, ssRect_.height, hdc_, sRect_.x, sRect_.y, sRect_.width, sRect_.height, SRCCOPY);
 		}
 
 		~Painter()
 		{
 			SetStretchBltMode(hdc_, HALFTONE);
-			StretchBlt(hdc_, 0, 0, width_ * scale_, height_ * scale_, mdc_, 0, 0, width_ * ss_, height_ * ss_, SRCCOPY);
+			SetBrushOrgEx(hdc_, 0, 0, NULL);
+			StretchBlt(hdc_, sRect_.x, sRect_.y, sRect_.width, sRect_.height, mdc_, 0, 0, ssRect_.width, ssRect_.height, SRCCOPY);
 			SelectObject(mdc_, old_);
-			DeleteDC(mdc_);
 			DeleteObject(bitmap_);
+			DeleteDC(mdc_);
 		}
 
 		void setClipRect(const Rect& rect)
 		{
-			RECT rt = rect.toRect(ss_);
+			RECT rt = transform(rect).toRect();
 			HRGN hrgn = CreateRectRgnIndirect(&rt);
 			SelectClipRgn(mdc_, hrgn);
 			DeleteObject(hrgn);
@@ -343,7 +358,8 @@ namespace minui
 			if (style.fontFamily)
 			{
 				LOGFONT ft = { 0 };
-				ft.lfHeight = style.fontSize * ss_;
+				ft.lfHeight = style.fontSize * scale_;
+				ft.lfQuality = CLEARTYPE_QUALITY; // clartype
 				for (auto fontFamily : style.fontFamily)
 				{
 					if (fontFamily)
@@ -358,15 +374,31 @@ namespace minui
 			return NULL;
 		}
 
+		int transform(int num) const
+		{
+			return num * ss_;
+		}
+
+		Point transform(Point pt) const
+		{
+			return Point{ pt.x - rect_.x, pt.y - rect_.y }.scale(ss_);
+		}
+
+		Rect transform(Rect rect) const
+		{
+			return Rect{ rect.x - rect_.x, rect.y - rect_.y, rect.width, rect.height }.scale(ss_);
+		}
+
 	private:
 		HDC hdc_;
 		HDC mdc_;
 		HBITMAP bitmap_;
 		HBITMAP old_;
+		Rect rect_;
+		Rect sRect_; // scale rect
+		Rect ssRect_; // super sample rect
 		float scale_;
-		float ss_;
-		int width_;
-		int height_;
+		float ss_; // super sample sacle
 	};
 
 	class Window;
@@ -654,10 +686,10 @@ namespace minui
 
 		void onPaint(HDC hdc, int width, int height)
 		{
-			auto rect = Rect{ 0,0,width, height }.scale(scale_);
+			auto rect = Rect{ 0,0,width, height }.scale(1.0 / scale_);
 			auto style = Styles::instance().getStyle(Styles::Window);
 
-			Painter painter(hdc, rect.width, rect.height, scale_);
+			Painter painter(hdc, rect, scale_, scale_);
 			painter.fillRect(rect, style.backgroundColor);
 
 			for (int i = 0; i < widgetIndex_; ++i)
@@ -940,9 +972,14 @@ namespace minui
 		void draw(Painter& painter) override
 		{
 			auto style = Styles::instance().getStyle(id() + state_);
-			painter.fillRoundRect(rect(), style.radius, style.backgroundColor);
+			painter.withAA(rect(), [=](Painter& aaPainter)
+				{
+					aaPainter.fillRoundRect(rect(), style.radius, style.backgroundColor);
+				}
+			);
+
 			if (text_)
-				painter.drawText(rect(), text_, style);
+				painter.drawText(rect(), text_, style); // text not need AA
 		}
 
 		void mouseMove(bool leave) override
@@ -995,14 +1032,17 @@ namespace minui
 		void draw(Painter& painter) override
 		{
 			auto style = Styles::instance().getStyle(id());
-			painter.fillRoundRect(rect(), style.radius, style.backgroundColor);
-
-			if (0 < step_)
-			{
-				Rect stepRect = rect();
-				stepRect.width *= step_;
-				painter.fillRoundRect(stepRect, style.radius, style.color);
-			}
+			painter.withAA(rect(), [=](Painter& aaPainter)
+				{
+					aaPainter.fillRoundRect(rect(), style.radius, style.backgroundColor);
+					if (0 < step_)
+					{
+						Rect stepRect = rect();
+						stepRect.width *= step_;
+						aaPainter.fillRoundRect(stepRect, style.radius, style.color);
+					}
+				}
+			);
 		}
 
 	private:
@@ -1027,7 +1067,13 @@ namespace minui
 		void draw(Painter& painter) override
 		{
 			if (bmp_)
-				painter.drawImage(rect(), (const uint8_t*)bmp_);
+			{
+				painter.withAA(rect(), [=](Painter& aaPainter)
+					{
+						aaPainter.drawImage(rect(), (const uint8_t*)bmp_);
+					}
+				);
+			}
 		}
 
 	private:
@@ -1063,17 +1109,21 @@ namespace minui
 		close_->setRect(Rect{ titleRect_.width, 0,  48, 32 });
 		close_->setOnDraw([=](Painter& painter)
 			{
-				auto& style = Styles::instance().getStyle(Styles::CloseButton);
 				Rect rect = close_->rect();
-				// draw 12 x 12  x
-				int xCenter = rect.x + rect.width / 2;
-				int yCenter = rect.y + rect.height / 2;
-				int xWidth = 12;
-				int xHeight = 12;
-				painter.drawLine(xCenter, yCenter, xCenter - 6, yCenter + 6, 1, style.color);
-				painter.drawLine(xCenter, yCenter, xCenter + 6, yCenter + 6, 1, style.color);
-				painter.drawLine(xCenter, yCenter, xCenter + 6, yCenter - 6, 1, style.color);
-				painter.drawLine(xCenter, yCenter, xCenter - 6, yCenter - 6, 1, style.color);
+				painter.withAA(rect, [=](Painter& aaPainter)
+					{
+						auto& style = Styles::instance().getStyle(Styles::CloseButton);
+						// draw 12 x 12  x
+						int xCenter = rect.x + rect.width / 2;
+						int yCenter = rect.y + rect.height / 2;
+						int xWidth = 12;
+						int xHeight = 12;
+						aaPainter.drawLine(xCenter, yCenter, xCenter - 6, yCenter + 6, 1, style.color);
+						aaPainter.drawLine(xCenter, yCenter, xCenter + 6, yCenter + 6, 1, style.color);
+						aaPainter.drawLine(xCenter, yCenter, xCenter + 6, yCenter - 6, 1, style.color);
+						aaPainter.drawLine(xCenter, yCenter, xCenter - 6, yCenter - 6, 1, style.color);
+					}
+				);
 			});
 		close_->setOnClick([=]
 			{
