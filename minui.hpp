@@ -788,7 +788,7 @@ namespace minui
 	class Application : public Handle
 	{
 	public:
-		static bool initialize()
+		static bool initialize(const char* appId)
 		{
 			initDpiAwareness();
 
@@ -1105,7 +1105,7 @@ namespace minui
 		const void* bmp_;
 	};
 
-	inline  bool Window::create()
+	inline bool Window::create()
 	{
 		int style = WS_OVERLAPPED | WS_CAPTION | WS_THICKFRAME;
 		HWND hwnd = CreateWindowEx(0, WndClass, L"Window", style, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, NULL, NULL, NULL, NULL);
