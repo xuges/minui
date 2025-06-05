@@ -12,14 +12,18 @@ const uint8_t logoDarkBmpData[] =
 
 int main()
 {
-	Application::initialize();
-
-	// custom styles
+	// custom style name
 	static constexpr const char* TitleLabel = "TitleLabel";
 	static constexpr const char* ColorLabel = "ColorLabel";
 	static constexpr const char* ColorButton = "ColorButton";
-	static constexpr const char* ColorButtonHover = "ColorButton:hover";
+	static constexpr const char* ColorButtonHover= "ColorButton:hover";
 	static constexpr const char* ColorButtonPress = "ColorButton:press";
+
+	if (!Application::initialize("com.github.minui.example"))
+	{
+		printf("initialize application failed!\n");
+		return 1;
+	}
 
 	Window window;
 	window.create();
@@ -165,11 +169,12 @@ int main()
 			button3.setText(dark ? "Light" : "Dark");
 
 			auto logoData = darkMode ? logoDarkBmpData : logoLightBmpData;
-			logo1.setBmpData(logoData);
-			logo2.setBmpData(logoData);
-			logo3.setBmpData(logoData);
+			auto logDataLen = darkMode ? sizeof(logoDarkBmpData) : sizeof(logoLightBmpData);
+			logo1.setBmpData(logoData, logDataLen);
+			logo2.setBmpData(logoData, logDataLen);
+			logo3.setBmpData(logoData, logDataLen);
 
-			window.update();
+			styles.update();
 		};
 
 	setDarkStyles(dark);
