@@ -39,11 +39,11 @@ It has these widgets:
 
 * Windows 10, 11 (tested)
 * Windows 7, 8, 8.1 (no-test now)
-* Linux with GNOME (developing)
-
+* Ubuntu 24.04 GNOME (tested)
+* CentOS 7 GNOME (tested)
 
 
 ### Dependents
 
 * Windows:  GDI
-* Linux with GNOME: gtk4, gtk3 (developing)
+* Linux: gtk4 gtk3
