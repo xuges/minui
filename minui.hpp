@@ -804,11 +804,12 @@ namespace minui
 			wcx.hCursor = LoadCursor(NULL, IDC_ARROW);
 			wcx.hbrBackground = (HBRUSH)COLOR_WINDOWFRAME;
 			wcx.lpszClassName = Window::WndClass;
-			RegisterClassEx(&wcx);
-			int err = GetLastError();
+			ATOM atom = RegisterClassEx(&wcx);
+			if (atom == 0)
+				return false;
 
 			setStyles(isDarkMode());
-			return err == 0;
+			return true;
 		}
 
 		static void exec()
