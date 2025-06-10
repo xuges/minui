@@ -1313,6 +1313,7 @@ namespace minui
 				SYMBOL_WITH(gtk_css_provider_load_from_data_, "gtk_css_provider_load_from_data");
 
 				SYMBOL(gdk_pixbuf_new_from_stream);
+				SYMBOL(gdk_pixbuf_new_from_stream_at_scale);
 				SYMBOL(gdk_display_get_default);
 
 				if (isGtk3_)
@@ -1442,6 +1443,7 @@ namespace minui
 
 			// gdk
 			FUNC(void*, gdk_pixbuf_new_from_stream, (void* s, void* cancel, void* err));
+			FUNC(void*, gdk_pixbuf_new_from_stream_at_scale, (void* s, int width, int height, bool aspect_radio, void* cancel, void* err));
 			FUNC(void*, gdk_display_get_default, ());
 
 			// adwaita
@@ -2199,7 +2201,7 @@ namespace minui
     			auto stream = gtk::lib().g_memory_input_stream_new_from_data(bmp_, size, NULL);
     
 				gtk::Error* error = nullptr;
-				auto pixbuf = gtk::lib().gdk_pixbuf_new_from_stream(stream, nullptr, &error);
+				auto pixbuf = gtk::lib().gdk_pixbuf_new_from_stream_at_scale(stream, rect().width, rect().height, false, nullptr, &error);
 				gtk::lib().g_input_stream_close(stream, nullptr, nullptr);
 				if (error)
 					return;
