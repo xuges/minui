@@ -1996,6 +1996,12 @@ namespace minui
 				gtk::lib().set_window_titlebar(handle_, titleBar);
 
 				gtk::lib().gtk_window_present(handle_);
+
+				for (int i = 0; i < widgetIndex_; ++i)
+				{
+					auto widget = widgets_[i];
+					widget->setVisible(widget->visible()); // keep initial visible
+				}
 			});
 		}
 
