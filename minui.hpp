@@ -1986,14 +1986,14 @@ namespace minui
 		{
 			Application::runOnUI([=]()
 			{
-				auto titleBar = gtk::lib().gtk_header_bar_new();
-				gtk::lib().gtk_widget_set_size_request(titleBar, rect_.width + 10, 30);
-				gtk::lib().gtk_header_bar_set_decoration_layout(titleBar, "menu:close");
-				gtk::lib().gtk_header_bar_set_title_widget(titleBar, gtk::lib().gtk_label_new(""));
-				gtk::lib().gtk_header_bar_set_show_title_buttons(titleBar, true);
+				titleBar_ = gtk::lib().gtk_header_bar_new();
+				gtk::lib().gtk_widget_set_size_request(titleBar_, rect_.width + 10, 30);
+				gtk::lib().gtk_header_bar_set_decoration_layout(titleBar_, "menu:close");
+				gtk::lib().gtk_header_bar_set_title_widget(titleBar_, gtk::lib().gtk_label_new(""));
+				gtk::lib().gtk_header_bar_set_show_title_buttons(titleBar_, true);
 
-				gtk::lib().gtk_fixed_put(fixed_, titleBar, 0, 0);
-				gtk::lib().set_window_titlebar(handle_, titleBar);
+				gtk::lib().gtk_fixed_put(fixed_, titleBar_, 0, 0);
+				gtk::lib().set_window_titlebar(handle_, titleBar_);
 
 				gtk::lib().gtk_window_present(handle_);
 
@@ -2034,7 +2034,7 @@ namespace minui
 			closeable_ = v;
 			Application::runOnUI([=]()
 			{
-				gtk::lib().gtk_widget_set_visible(close_, v);
+				gtk::lib().gtk_header_bar_set_show_title_buttons(titleBar_, v);
 			});
 		}
 
@@ -2057,7 +2057,7 @@ namespace minui
 	private:
 		gtk::Window* handle_ = nullptr;
 		gtk::Fixed* fixed_ = nullptr;
-		gtk::Widget* close_ = nullptr;
+		gtk::Widget* titleBar_ = nullptr;
 		const char* title_ = nullptr;
 		Rect rect_ = {0, 0, 0, 0};
 		int timerIndex_ = 0;
