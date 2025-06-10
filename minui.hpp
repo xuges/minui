@@ -181,7 +181,7 @@ namespace minui
 			return Style::defaultStyle();
 		}
 
-		void update();
+		void update() {}
 
 	private:
 		Styles()
@@ -261,14 +261,14 @@ namespace minui
 			}
 		}
 
-		void drawImage(const Rect& rect, const uint8_t* bmp)
+		void drawImage(const Rect& rect, const uint8_t* bmp, int size)
 		{
 			if (bmp[0] != 0x42 && bmp[1] != 0x4d)
 				return;
 
 			BITMAPFILEHEADER* bfh = (BITMAPFILEHEADER*)bmp;
-			/*if (bfh->bfSize > len)
-				return;*/
+			if (bfh->bfSize > size)
+				return;
 
 			BITMAPINFOHEADER* bih = (BITMAPINFOHEADER*)(bmp + sizeof(BITMAPFILEHEADER));
 			if (bih->biBitCount < 24)
@@ -1086,9 +1086,10 @@ namespace minui
 			setStyleName("image");
 		}
 
-		void setBmpData(const void* data)
+		void setBmpData(const void* data, int size)
 		{
 			bmp_ = data;
+			size_ = size;
 		}
 
 	protected:
@@ -1098,7 +1099,7 @@ namespace minui
 			{
 				painter.withAA(rect(), [=](Painter& aaPainter)
 					{
-						aaPainter.drawImage(rect(), (const uint8_t*)bmp_);
+						aaPainter.drawImage(rect(), (const uint8_t*)bmp_, size_);
 					}
 				);
 			}
@@ -1106,6 +1107,7 @@ namespace minui
 
 	private:
 		const void* bmp_;
+		int size_;
 	};
 
 	inline bool Window::create()
